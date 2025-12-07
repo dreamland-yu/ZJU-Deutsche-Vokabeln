@@ -7,17 +7,17 @@ const TYPE_MAP = {
 
 // --- 状态变量 ---
 let configData = {};
-let activeList = [];    // 从CSV加载的原始词
-let playList = [];      // 过滤掉“斩”掉的词后的播放列表
+let activeList = [];    // 原始加载的数据
+let playList = [];      // 播放列表
 
 // 核心状态
 let currentMode = 'spelling';   
 let currentOrder = 'random';    
 let gameState = 'waiting_answer'; 
 let currentWord = null;
-let currentIndex = 0;
+let currentIndex = 0;   // 进度指针
 
-// 本地存储：已删除的单词 ID 集合
+// 本地存储
 let ignoredSet = new Set(); 
 
 // --- DOM 引用 ---
@@ -40,54 +40,56 @@ const els = {
     btnNext: document.getElementById('btn-next'),
     btnModeGender: document.getElementById('btn-mode-gender'),
     btnModeSpelling: document.getElementById('btn-mode-spelling'),
-    btnIgnore: document.getElementById('btn-ignore') // 新增
+    btnIgnore: document.getElementById('btn-ignore')
 };
 
-// --- 1. 初始化 ---
-// 页面加载时：先读本地存储，再读Config
-loadLocalStorage();
+// --- 1. 程序入口 ---
+// 页面加载时立即执行
+initApp();
 
-fetch('data/config.json')
-    .then(res => res.json())
-    .then(data => {
-        configData = data;
-        renderSidebar();
-        
-        // 尝试自动恢复上次的勾选状态并加载
-        if (restoreSidebarSelection()) {
-            loadSelectedUnits(true); // true 表示是恢复模式，不弹出alert
-        } else {
-            els.count.textContent = "请打开侧边栏选择单元";
-            toggleSidebar();
-        }
-    })
-    .catch(err => {
-        console.error("Config加载失败", err);
-        els.count.textContent = "配置加载失败";
-    });
+function initApp() {
+    // 1. 先恢复一些基础设置 (模式、删除列表)
+    loadBasicSettings();
 
-// --- 2. 本地存储逻辑 (核心) ---
+    // 2. 加载配置文件
+    fetch('data/config.json')
+        .then(res => res.json())
+        .then(data => {
+            configData = data;
+            renderSidebar(); // 渲染侧边栏
+            
+            // 3. 尝试恢复上次勾选的单元并自动开始
+            // 这是关键：如果有上次的选择，就自动加载，不弹侧边栏
+            if (restoreSidebarSelection()) {
+                loadSelectedUnits(true); // true = 恢复模式
+            } else {
+                els.count.textContent = "请打开侧边栏选择单元";
+                toggleSidebar(); // 第一次来，打开侧边栏
+            }
+        })
+        .catch(err => {
+            console.error("Config加载失败", err);
+            els.count.textContent = "配置加载失败 (需 Live Server)";
+        });
+}
 
-// 读取本地存储
-function loadLocalStorage() {
-    // 1. 读取被删除的词
+// --- 2. 本地存储逻辑 ---
+
+function loadBasicSettings() {
+    // 恢复“斩”掉的词
     const savedIgnored = localStorage.getItem('dv_ignored');
-    if (savedIgnored) {
-        ignoredSet = new Set(JSON.parse(savedIgnored));
-    }
+    if (savedIgnored) ignoredSet = new Set(JSON.parse(savedIgnored));
 
-    // 2. 读取上次的设置 (模式、顺序)
+    // 恢复模式和顺序设置
     const savedSettings = localStorage.getItem('dv_settings');
     if (savedSettings) {
         const s = JSON.parse(savedSettings);
         currentMode = s.mode || 'spelling';
         currentOrder = s.order || 'random';
-        currentIndex = s.index || 0; // 恢复进度
+        // 注意：currentIndex 暂时不恢复，要等数据加载完
         
-        // 恢复UI状态
-        switchMode(currentMode, false); // false = 不刷新列表(等数据加载完)
-        
-        // 恢复单选框
+        // 恢复UI显示
+        switchMode(currentMode, false);
         const radios = document.getElementsByName('order');
         for(let r of radios) {
             if(r.value === currentOrder) r.checked = true;
@@ -95,50 +97,46 @@ function loadLocalStorage() {
     }
 }
 
-// 保存当前状态 (每次变动都调用)
-function saveState() {
-    const settings = {
-        mode: currentMode,
-        order: currentOrder,
-        index: currentIndex
-    };
-    localStorage.setItem('dv_settings', JSON.stringify(settings));
-}
-
-// 保存删除列表
-function saveIgnored() {
-    localStorage.setItem('dv_ignored', JSON.stringify([...ignoredSet]));
-}
-
-// 恢复侧边栏勾选
+// 恢复侧边栏勾选状态
 function restoreSidebarSelection() {
     const savedSelection = localStorage.getItem('dv_selection');
     if (!savedSelection) return false;
 
     const checkedValues = JSON.parse(savedSelection);
-    // 等待Sidebar渲染完，延迟一点点勾选
-    setTimeout(() => {
-        const inputs = document.querySelectorAll('#bookshelf input');
-        let hasChecked = false;
-        inputs.forEach(input => {
-            if (checkedValues.includes(input.value)) {
-                input.checked = true;
-                hasChecked = true;
-            }
-        });
-    }, 0);
-    return true; // 表示尝试恢复了
+    const inputs = document.querySelectorAll('#bookshelf input');
+    let hasChecked = false;
+    
+    inputs.forEach(input => {
+        if (checkedValues.includes(input.value)) {
+            input.checked = true;
+            hasChecked = true;
+        }
+    });
+    return hasChecked;
 }
 
-// 保存侧边栏勾选
-function saveSidebarSelection() {
+// 保存当前所有状态
+function saveState() {
+    // 1. 保存设置和进度
+    const settings = {
+        mode: currentMode,
+        order: currentOrder,
+        index: currentIndex // 保存当前背到第几个了
+    };
+    localStorage.setItem('dv_settings', JSON.stringify(settings));
+
+    // 2. 保存侧边栏勾选
     const checkboxes = document.querySelectorAll('#bookshelf input:checked');
     const values = Array.from(checkboxes).map(cb => cb.value);
     localStorage.setItem('dv_selection', JSON.stringify(values));
 }
 
+function saveIgnored() {
+    localStorage.setItem('dv_ignored', JSON.stringify([...ignoredSet]));
+}
 
-// --- 3. 侧边栏与加载 ---
+// --- 3. 侧边栏与数据加载 ---
+
 function renderSidebar() {
     els.bookshelf.innerHTML = "";
     for (const [bookName, files] of Object.entries(configData)) {
@@ -169,6 +167,7 @@ function renderSidebar() {
     }
 }
 
+// 加载单元 (核心修改点)
 async function loadSelectedUnits(isRestore = false) {
     const checkboxes = document.querySelectorAll('#bookshelf input:checked');
     if (checkboxes.length === 0) {
@@ -176,9 +175,7 @@ async function loadSelectedUnits(isRestore = false) {
         return;
     }
 
-    saveSidebarSelection(); // 保存勾选状态
-
-    els.sidebarStats.textContent = "读取中...";
+    els.sidebarStats.textContent = "正在读取...";
     let tempAllWords = [];
 
     const promises = Array.from(checkboxes).map(async cb => {
@@ -193,11 +190,11 @@ async function loadSelectedUnits(isRestore = false) {
             for (let i = 1; i < lines.length; i++) {
                 if (!lines[i].trim()) continue;
                 const row = lines[i].split(',');
-                // 生成一个唯一ID用于删除标记：书名-单元-单词
+                // 生成唯一ID
                 const uniqueId = `${info.book}-${info.name}-${row[2].trim()}`;
                 
                 words.push({
-                    id: uniqueId, // 关键：唯一ID
+                    id: uniqueId,
                     unit: info.name,
                     type: row[0].trim(),
                     gender: row[1] ? row[1].trim() : "",
@@ -219,57 +216,70 @@ async function loadSelectedUnits(isRestore = false) {
     activeList = tempAllWords;
     els.sidebarStats.textContent = `已加载 ${activeList.length} 词`;
     
-    refreshPlayList(isRestore); // 如果是恢复模式，尽量保持currentIndex
+    // 数据加载完毕，开始生成播放列表
+    // 传入 isRestore 标记，告诉函数 "我是自动恢复的，请尝试恢复进度"
+    refreshPlayList(isRestore); 
+    
+    // 如果是手动点击加载，则关闭侧边栏；如果是自动恢复，则不动
     if (!isRestore) toggleSidebar(); 
 }
 
-// --- 4. 刷新播放列表 (过滤删除词) ---
-function refreshPlayList(keepIndex = false) {
-    // 1. 过滤掉被“斩”的词
-    // 2. 过滤掉模式不符的词 (比如只要名词)
+// --- 4. 刷新与播放 (关键逻辑) ---
+
+function refreshPlayList(isRestore = false) {
+    // 1. 过滤 (斩掉的 + 模式不符的)
     let filtered = activeList.filter(w => {
         const notIgnored = !ignoredSet.has(w.id);
         const typeMatch = (currentMode === 'gender') ? (w.type === 'n') : true;
         return notIgnored && typeMatch;
     });
 
-    // 3. 排序
+    // 2. 排序与进度恢复
     if (currentOrder === 'random') {
-        // 如果是随机，且不是恢复状态，则重新洗牌
-        if (!keepIndex) {
-            playList = [...filtered].sort(() => Math.random() - 0.5);
-            currentIndex = 0;
-        } else {
-            // 恢复状态下，如果是随机，为了体验好，也重洗吧，或者保持原样
-            // 这里简单处理：只要加载数据就重洗
-             playList = [...filtered].sort(() => Math.random() - 0.5);
-        }
+        // 随机模式：为了保证"随机感"，每次刷新都重洗。
+        // 但如果是恢复网页，用户可能希望看到之前的单词？
+        // 随机模式下很难界定"进度"，所以我们策略是：
+        // 恢复时也重洗，但如果需要，可以存 seed。这里简单处理：重洗。
+        playList = [...filtered].sort(() => Math.random() - 0.5);
+        if (!isRestore) currentIndex = 0;
     } else {
-        // 顺序模式
-        playList = [...filtered]; 
-        // keepIndex为true时(比如刷新页面)，尝试保持进度。
-        // 但如果进度超过了现在列表长度，就重置。
-        if (!keepIndex) currentIndex = 0;
+        // 顺序模式：这是恢复进度的重点
+        playList = [...filtered];
+        
+        if (isRestore) {
+            // 从 localStorage 拿回上次的进度
+            const savedSettings = localStorage.getItem('dv_settings');
+            if (savedSettings) {
+                const s = JSON.parse(savedSettings);
+                // 恢复指针
+                if (s.index && s.index < playList.length) {
+                    currentIndex = s.index;
+                } else {
+                    currentIndex = 0;
+                }
+            }
+        } else {
+            // 手动切换设置，重置进度
+            currentIndex = 0;
+        }
     }
 
-    if (currentIndex >= playList.length) currentIndex = 0;
-    saveState(); // 保存状态
-
-    els.count.textContent = `当前剩余: ${playList.length} 词 (已斩: ${ignoredSet.size})`;
+    saveState(); // 立即保存状态
+    els.count.textContent = `剩余: ${playList.length} (斩: ${ignoredSet.size})`;
     nextQuestion();
 }
 
 // --- 5. 出题 ---
 function nextQuestion() {
     if (playList.length === 0) {
-        els.qMain.textContent = "没有单词了！";
-        els.qSub.textContent = "可能都被你“斩”光了，或未选择单元。";
+        els.qMain.textContent = "列表为空";
+        els.qSub.textContent = "请检查单元选择或恢复已斩单词";
         els.btnSubmit.style.display = 'none';
         els.btnIgnore.style.display = 'none';
         return;
     }
 
-    // 保存进度
+    // 在出题前保存当前进度（这样下次打开就是这个词）
     saveState();
 
     if (currentOrder === 'random') {
@@ -277,14 +287,13 @@ function nextQuestion() {
         currentWord = playList[r];
     } else {
         if (currentIndex >= playList.length) {
-            alert("本轮结束，重新开始！");
+            alert("本轮结束，即将重新开始！");
             currentIndex = 0;
         }
         currentWord = playList[currentIndex];
-        currentIndex++;
+        currentIndex++; // 指向下一个，准备下次调用
     }
 
-    // 更新“斩”按钮状态
     updateIgnoreBtnState();
 
     // UI 重置
@@ -319,64 +328,52 @@ function nextQuestion() {
     }
 }
 
-// --- 6. 新增：删除/恢复功能 ---
+// --- 6. 交互功能 ---
 function toggleIgnore() {
     if (!currentWord) return;
-
     if (ignoredSet.has(currentWord.id)) {
-        // 撤销删除
         ignoredSet.delete(currentWord.id);
     } else {
-        // 确认删除
         ignoredSet.add(currentWord.id);
     }
-    
-    saveIgnored(); // 保存到硬盘
-    updateIgnoreBtnState(); // 更新按钮样式
-    
-    // 更新左上角计数
-    els.count.textContent = `当前剩余: ${playList.length} 词 (已斩: ${ignoredSet.size})`;
-    
-    // 注意：这里我们不立即刷新 playList，否则当前词会突然消失。
-    // 我们只是标记它，下次 filter 时它就不见了。
+    saveIgnored();
+    updateIgnoreBtnState();
+    els.count.textContent = `剩余: ${playList.length} (斩: ${ignoredSet.size})`;
 }
 
 function updateIgnoreBtnState() {
     if (!currentWord) return;
     if (ignoredSet.has(currentWord.id)) {
-        els.btnIgnore.textContent = "↩️ 撤销删除";
+        els.btnIgnore.textContent = "↩️ 撤销";
         els.btnIgnore.classList.add('ignored');
     } else {
-        els.btnIgnore.textContent = "🗑️ 斩 (熟词)";
+        els.btnIgnore.textContent = "🗑️ 斩";
         els.btnIgnore.classList.remove('ignored');
     }
 }
 
 function resetIgnored() {
-    if (confirm("确定要恢复所有被删除的单词吗？")) {
+    if (confirm("恢复所有已删除单词？")) {
         ignoredSet.clear();
         saveIgnored();
-        alert("已恢复！请重新加载单元生效。");
-        // 刷新页面或重新加载
-        loadSelectedUnits();
+        loadSelectedUnits(); // 重新加载生效
     }
 }
 
-// --- 7. 其他交互保持不变 ---
 function changeOrder() {
     const radios = document.getElementsByName('order');
     for(let r of radios) if(r.checked) currentOrder = r.value;
-    refreshPlayList();
+    refreshPlayList(false); // 改变顺序时重置进度
 }
 
 function switchMode(mode, refresh = true) {
     currentMode = mode;
     els.btnModeGender.className = mode === 'gender' ? 'active' : '';
     els.btnModeSpelling.className = mode === 'spelling' ? 'active' : '';
-    if(refresh && activeList.length > 0) refreshPlayList();
+    if(refresh && activeList.length > 0) refreshPlayList(false); // 改变模式时重置进度
 }
 
-// 判题 (保持不变)
+// 判题
 function checkGender(uGender) {
     if(gameState!=='waiting_answer') return;
     const ok = uGender.toLowerCase() === currentWord.gender.toLowerCase();
