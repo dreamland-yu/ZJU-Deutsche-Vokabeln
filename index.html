@@ -7,30 +7,26 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- 右侧悬浮开关 -->
-    <div id="sidebar-handle" onclick="toggleSidebar()">
-        📂 题库
-    </div>
+    <!-- 侧边栏开关 -->
+    <div id="sidebar-handle" onclick="toggleSidebar()">📂 题库</div>
 
     <div class="container">
-        <!-- 标题 -->
         <h1>Deutsche Vokabeln</h1>
         
         <div class="status-bar">
             <span id="word-count">请点击右侧打开题库 👉</span>
         </div>
 
-        <!-- 模式选择 -->
         <div class="mode-selector">
             <button onclick="switchMode('gender')" id="btn-mode-gender">A. 词性 (仅名词)</button>
             <button onclick="switchMode('spelling')" id="btn-mode-spelling" class="active">B. 默写 (全模式)</button>
         </div>
 
-        <!-- 答题卡片 -->
         <div class="card">
             
-            <!-- 【新增】工具栏：只放一个删除按钮，右对齐 -->
+            <!-- 工具栏：收藏 + 斩 -->
             <div class="top-toolbar">
+                <button id="btn-fav" onclick="toggleFav()">⭐ 收藏</button>
                 <button id="btn-ignore" onclick="toggleIgnore()">🗑️ 斩</button>
             </div>
 
@@ -90,10 +86,12 @@
 
         <div class="sidebar-section">
             <h3>单元选择 <button class="small-btn" onclick="loadSelectedUnits()">🔄 加载/刷新</button></h3>
-            <div id="bookshelf" class="checklist"></div>
+            <!-- 书架列表 -->
+            <div id="bookshelf" class="checklist">
+                <!-- JS 会在这里插入 "❤️ 我的收藏" 和其他书 -->
+            </div>
         </div>
         
-        <!-- 【新增】恢复数据区域 -->
         <div class="sidebar-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px dashed #ddd;">
             <h3>数据管理</h3>
             <button class="reset-btn" onclick="resetIgnored()">♻️ 恢复所有已斩单词</button>

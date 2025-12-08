@@ -1,26 +1,25 @@
-// --- 常量与映射 ---
+// --- 常量 ---
 const TYPE_MAP = {
     'n': '名词 (Nomen)', 'v': '动词 (Verb)', 'adj': '形容词 (Adjektiv)',
     'adv': '副词 (Adverb)', 'prep': '介词 (Präposition)', 'pron': '代词 (Pronomen)',
     'conj': '连词 (Konjunktion)', 'num': '数词 (Numerale)', 'art': '冠词 (Artikel)'
 };
 
-// --- 状态变量 ---
+// --- 状态 ---
 let configData = {};
-let activeList = [];    // 原始加载的数据
-let playList = [];      // 播放列表
+let activeList = []; 
+let playList = [];      
 
-// 核心状态
 let currentMode = 'spelling';   
 let currentOrder = 'random';    
 let gameState = 'waiting_answer'; 
 let currentWord = null;
-let currentIndex = 0;   // 进度指针
+let currentIndex = 0;   
 
-// 本地存储
 let ignoredSet = new Set(); 
+let favoriteSet = new Set(); // 新增：收藏集合
 
-// --- DOM 引用 ---
+// --- DOM ---
 const els = {
     count: document.getElementById('word-count'),
     bookshelf: document.getElementById('bookshelf'),
@@ -40,105 +39,79 @@ const els = {
     btnNext: document.getElementById('btn-next'),
     btnModeGender: document.getElementById('btn-mode-gender'),
     btnModeSpelling: document.getElementById('btn-mode-spelling'),
-    btnIgnore: document.getElementById('btn-ignore')
+    btnIgnore: document.getElementById('btn-ignore'),
+    btnFav: document.getElementById('btn-fav') // 新增
 };
 
-// --- 1. 程序入口 ---
-// 页面加载时立即执行
+// --- 1. 初始化 ---
 initApp();
 
 function initApp() {
-    // 1. 先恢复一些基础设置 (模式、删除列表)
     loadBasicSettings();
-
-    // 2. 加载配置文件
     fetch('data/config.json')
         .then(res => res.json())
         .then(data => {
             configData = data;
-            renderSidebar(); // 渲染侧边栏
-            
-            // 3. 尝试恢复上次勾选的单元并自动开始
-            // 这是关键：如果有上次的选择，就自动加载，不弹侧边栏
+            renderSidebar(); 
             if (restoreSidebarSelection()) {
-                loadSelectedUnits(true); // true = 恢复模式
+                loadSelectedUnits(true);
             } else {
                 els.count.textContent = "请打开侧边栏选择单元";
-                toggleSidebar(); // 第一次来，打开侧边栏
+                toggleSidebar(); 
             }
         })
         .catch(err => {
-            console.error("Config加载失败", err);
-            els.count.textContent = "配置加载失败 (需 Live Server)";
+            console.error(err);
+            els.count.textContent = "配置加载失败";
         });
 }
 
-// --- 2. 本地存储逻辑 ---
-
+// --- 2. 存储逻辑 ---
 function loadBasicSettings() {
-    // 恢复“斩”掉的词
     const savedIgnored = localStorage.getItem('dv_ignored');
     if (savedIgnored) ignoredSet = new Set(JSON.parse(savedIgnored));
 
-    // 恢复模式和顺序设置
+    // 加载收藏
+    const savedFav = localStorage.getItem('dv_favorites');
+    if (savedFav) favoriteSet = new Set(JSON.parse(savedFav));
+
     const savedSettings = localStorage.getItem('dv_settings');
     if (savedSettings) {
         const s = JSON.parse(savedSettings);
         currentMode = s.mode || 'spelling';
         currentOrder = s.order || 'random';
-        // 注意：currentIndex 暂时不恢复，要等数据加载完
-        
-        // 恢复UI显示
         switchMode(currentMode, false);
-        const radios = document.getElementsByName('order');
-        for(let r of radios) {
+        document.getElementsByName('order').forEach(r => {
             if(r.value === currentOrder) r.checked = true;
-        }
+        });
     }
 }
 
-// 恢复侧边栏勾选状态
-function restoreSidebarSelection() {
-    const savedSelection = localStorage.getItem('dv_selection');
-    if (!savedSelection) return false;
-
-    const checkedValues = JSON.parse(savedSelection);
-    const inputs = document.querySelectorAll('#bookshelf input');
-    let hasChecked = false;
-    
-    inputs.forEach(input => {
-        if (checkedValues.includes(input.value)) {
-            input.checked = true;
-            hasChecked = true;
-        }
-    });
-    return hasChecked;
-}
-
-// 保存当前所有状态
 function saveState() {
-    // 1. 保存设置和进度
-    const settings = {
-        mode: currentMode,
-        order: currentOrder,
-        index: currentIndex // 保存当前背到第几个了
-    };
+    const settings = { mode: currentMode, order: currentOrder, index: currentIndex };
     localStorage.setItem('dv_settings', JSON.stringify(settings));
 
-    // 2. 保存侧边栏勾选
     const checkboxes = document.querySelectorAll('#bookshelf input:checked');
     const values = Array.from(checkboxes).map(cb => cb.value);
     localStorage.setItem('dv_selection', JSON.stringify(values));
 }
 
-function saveIgnored() {
-    localStorage.setItem('dv_ignored', JSON.stringify([...ignoredSet]));
-}
+function saveIgnored() { localStorage.setItem('dv_ignored', JSON.stringify([...ignoredSet])); }
+function saveFavorites() { localStorage.setItem('dv_favorites', JSON.stringify([...favoriteSet])); }
 
-// --- 3. 侧边栏与数据加载 ---
-
+// --- 3. 侧边栏 ---
 function renderSidebar() {
     els.bookshelf.innerHTML = "";
+
+    // 【新增】特殊的“我的收藏”选项
+    const favDiv = document.createElement('div');
+    // 使用特殊 value 标记
+    favDiv.innerHTML = `<label class="special-item" style="display:block; padding:10px; cursor:pointer;">
+        <input type="checkbox" value="FAVORITES_ALL"> ❤️ 我的收藏本
+    </label>`;
+    els.bookshelf.appendChild(favDiv);
+
+    // 渲染普通书架
     for (const [bookName, files] of Object.entries(configData)) {
         const bookDiv = document.createElement('div');
         bookDiv.className = 'book-group';
@@ -146,9 +119,7 @@ function renderSidebar() {
         const titleDiv = document.createElement('div');
         titleDiv.className = 'book-title';
         titleDiv.innerHTML = `<span>📂 ${bookName}</span> <span>⬇</span>`;
-        titleDiv.onclick = () => {
-            bookDiv.querySelector('.unit-list').classList.toggle('show');
-        };
+        titleDiv.onclick = () => { bookDiv.querySelector('.unit-list').classList.toggle('show'); };
         
         const listDiv = document.createElement('div');
         listDiv.className = 'unit-list';
@@ -167,7 +138,22 @@ function renderSidebar() {
     }
 }
 
-// 加载单元 (核心修改点)
+function restoreSidebarSelection() {
+    const savedSelection = localStorage.getItem('dv_selection');
+    if (!savedSelection) return false;
+    const checkedValues = JSON.parse(savedSelection);
+    const inputs = document.querySelectorAll('#bookshelf input');
+    let hasChecked = false;
+    inputs.forEach(input => {
+        if (checkedValues.includes(input.value)) {
+            input.checked = true;
+            hasChecked = true;
+        }
+    });
+    return hasChecked;
+}
+
+// 【关键修改】加载逻辑
 async function loadSelectedUnits(isRestore = false) {
     const checkboxes = document.querySelectorAll('#bookshelf input:checked');
     if (checkboxes.length === 0) {
@@ -175,97 +161,109 @@ async function loadSelectedUnits(isRestore = false) {
         return;
     }
 
-    els.sidebarStats.textContent = "正在读取...";
-    let tempAllWords = [];
-
-    const promises = Array.from(checkboxes).map(async cb => {
-        const info = JSON.parse(cb.value);
-        const path = `data/${info.book}/${info.file}`;
-        try {
-            const res = await fetch(path);
-            if (!res.ok) throw new Error("404");
-            const text = await res.text();
-            const lines = text.trim().split('\n');
-            const words = [];
-            for (let i = 1; i < lines.length; i++) {
-                if (!lines[i].trim()) continue;
-                const row = lines[i].split(',');
-                // 生成唯一ID
-                const uniqueId = `${info.book}-${info.name}-${row[2].trim()}`;
-                
-                words.push({
-                    id: uniqueId,
-                    unit: info.name,
-                    type: row[0].trim(),
-                    gender: row[1] ? row[1].trim() : "",
-                    word: row[2].trim(),
-                    cn: row[3].trim(),
-                    forms: row[4] ? row[4].trim() : "",
-                    example: row[5] ? row[5].trim() : ""
-                });
-            }
-            return words;
-        } catch (err) {
-            console.error(err); return [];
-        }
+    // 检查是否勾选了“我的收藏”
+    let isFavMode = false;
+    checkboxes.forEach(cb => {
+        if (cb.value === "FAVORITES_ALL") isFavMode = true;
     });
+
+    els.sidebarStats.textContent = isFavMode ? "正在搜索收藏..." : "正在读取...";
+    let tempAllWords = [];
+    let promises = [];
+
+    if (isFavMode) {
+        // 如果选了收藏，我们要扫描所有 config 里的文件，因为我们不知道收藏的词在哪本书里
+        // 为了方便，这里直接加载所有书（对于文本文件来说速度很快）
+        // 如果你只想加载勾选的书里的收藏，逻辑会不同。这里实现的是“查看所有收藏”
+        for (const [bookName, files] of Object.entries(configData)) {
+            files.forEach(fileName => {
+                const displayName = fileName.replace('.csv', '');
+                const info = { book: bookName, file: fileName, name: displayName };
+                promises.push(fetchCsv(info));
+            });
+        }
+    } else {
+        // 正常模式：只加载勾选的文件
+        checkboxes.forEach(cb => {
+            if (cb.value !== "FAVORITES_ALL") {
+                const info = JSON.parse(cb.value);
+                promises.push(fetchCsv(info));
+            }
+        });
+    }
 
     const results = await Promise.all(promises);
     results.forEach(w => tempAllWords = tempAllWords.concat(w));
     
+    // 如果是收藏模式，这里进行过滤，只保留在 favoriteSet 里的
+    if (isFavMode) {
+        tempAllWords = tempAllWords.filter(w => favoriteSet.has(w.id));
+        if (tempAllWords.length === 0) {
+            alert("你还没有收藏任何单词！");
+            return;
+        }
+    }
+
     activeList = tempAllWords;
     els.sidebarStats.textContent = `已加载 ${activeList.length} 词`;
     
-    // 数据加载完毕，开始生成播放列表
-    // 传入 isRestore 标记，告诉函数 "我是自动恢复的，请尝试恢复进度"
-    refreshPlayList(isRestore); 
-    
-    // 如果是手动点击加载，则关闭侧边栏；如果是自动恢复，则不动
+    refreshPlayList(isRestore);
     if (!isRestore) toggleSidebar(); 
 }
 
-// --- 4. 刷新与播放 (关键逻辑) ---
+// 辅助：读取单个CSV
+async function fetchCsv(info) {
+    const path = `data/${info.book}/${info.file}`;
+    try {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error("404");
+        const text = await res.text();
+        const lines = text.trim().split('\n');
+        const words = [];
+        for (let i = 1; i < lines.length; i++) {
+            if (!lines[i].trim()) continue;
+            const row = lines[i].split(',');
+            const uniqueId = `${info.book}-${info.name}-${row[2].trim()}`; // ID生成
+            words.push({
+                id: uniqueId,
+                unit: info.name,
+                type: row[0].trim(),
+                gender: row[1] ? row[1].trim() : "",
+                word: row[2].trim(),
+                cn: row[3].trim(),
+                forms: row[4] ? row[4].trim() : "",
+                example: row[5] ? row[5].trim() : ""
+            });
+        }
+        return words;
+    } catch (err) { return []; }
+}
 
+// --- 4. 刷新与播放 ---
 function refreshPlayList(isRestore = false) {
-    // 1. 过滤 (斩掉的 + 模式不符的)
     let filtered = activeList.filter(w => {
         const notIgnored = !ignoredSet.has(w.id);
         const typeMatch = (currentMode === 'gender') ? (w.type === 'n') : true;
         return notIgnored && typeMatch;
     });
 
-    // 2. 排序与进度恢复
     if (currentOrder === 'random') {
-        // 随机模式：为了保证"随机感"，每次刷新都重洗。
-        // 但如果是恢复网页，用户可能希望看到之前的单词？
-        // 随机模式下很难界定"进度"，所以我们策略是：
-        // 恢复时也重洗，但如果需要，可以存 seed。这里简单处理：重洗。
         playList = [...filtered].sort(() => Math.random() - 0.5);
         if (!isRestore) currentIndex = 0;
     } else {
-        // 顺序模式：这是恢复进度的重点
         playList = [...filtered];
-        
         if (isRestore) {
-            // 从 localStorage 拿回上次的进度
             const savedSettings = localStorage.getItem('dv_settings');
             if (savedSettings) {
                 const s = JSON.parse(savedSettings);
-                // 恢复指针
-                if (s.index && s.index < playList.length) {
-                    currentIndex = s.index;
-                } else {
-                    currentIndex = 0;
-                }
+                currentIndex = (s.index && s.index < playList.length) ? s.index : 0;
             }
         } else {
-            // 手动切换设置，重置进度
             currentIndex = 0;
         }
     }
-
-    saveState(); // 立即保存状态
-    els.count.textContent = `剩余: ${playList.length} (斩: ${ignoredSet.size})`;
+    saveState();
+    els.count.textContent = `剩余: ${playList.length}`;
     nextQuestion();
 }
 
@@ -273,13 +271,13 @@ function refreshPlayList(isRestore = false) {
 function nextQuestion() {
     if (playList.length === 0) {
         els.qMain.textContent = "列表为空";
-        els.qSub.textContent = "请检查单元选择或恢复已斩单词";
+        els.qSub.textContent = "请检查选择或恢复已斩单词";
         els.btnSubmit.style.display = 'none';
         els.btnIgnore.style.display = 'none';
+        els.btnFav.style.display = 'none';
         return;
     }
 
-    // 在出题前保存当前进度（这样下次打开就是这个词）
     saveState();
 
     if (currentOrder === 'random') {
@@ -287,26 +285,26 @@ function nextQuestion() {
         currentWord = playList[r];
     } else {
         if (currentIndex >= playList.length) {
-            alert("本轮结束，即将重新开始！");
+            alert("本轮结束，重新开始！");
             currentIndex = 0;
         }
         currentWord = playList[currentIndex];
-        currentIndex++; // 指向下一个，准备下次调用
+        currentIndex++;
     }
 
-    updateIgnoreBtnState();
+    // 更新按钮状态
+    updateBtnStates();
 
-    // UI 重置
     gameState = 'waiting_answer';
     els.result.innerHTML = ""; els.result.className = "result";
     els.infoArea.style.display = 'none';
     els.inputFull.value = "";
     els.btnIgnore.style.display = 'inline-block';
+    els.btnFav.style.display = 'inline-block';
     
     els.qUnit.textContent = currentWord.unit;
     els.qMain.textContent = currentWord.cn;
-    const displayType = TYPE_MAP[currentWord.type] || currentWord.type;
-    els.qTag.textContent = displayType;
+    els.qTag.textContent = TYPE_MAP[currentWord.type] || currentWord.type;
     els.btnNext.style.display = 'none';
 
     if (currentMode === 'gender') {
@@ -320,15 +318,23 @@ function nextQuestion() {
         els.uiInput.style.display = 'block';
         els.btnSubmit.style.display = 'inline-block';
         els.inputFull.focus();
-        if (currentWord.type === 'n') {
-            els.inputFull.placeholder = "名词: der/die/das + 单词";
-        } else {
-            els.inputFull.placeholder = "请输入单词...";
-        }
+        if (currentWord.type === 'n') els.inputFull.placeholder = "名词: der/die/das + 单词";
+        else els.inputFull.placeholder = "请输入单词...";
     }
 }
 
-// --- 6. 交互功能 ---
+// --- 6. 交互 (收藏 & 斩) ---
+function toggleFav() {
+    if (!currentWord) return;
+    if (favoriteSet.has(currentWord.id)) {
+        favoriteSet.delete(currentWord.id);
+    } else {
+        favoriteSet.add(currentWord.id);
+    }
+    saveFavorites();
+    updateBtnStates();
+}
+
 function toggleIgnore() {
     if (!currentWord) return;
     if (ignoredSet.has(currentWord.id)) {
@@ -337,12 +343,14 @@ function toggleIgnore() {
         ignoredSet.add(currentWord.id);
     }
     saveIgnored();
-    updateIgnoreBtnState();
-    els.count.textContent = `剩余: ${playList.length} (斩: ${ignoredSet.size})`;
+    updateBtnStates();
+    els.count.textContent = `剩余: ${playList.length}`;
 }
 
-function updateIgnoreBtnState() {
+function updateBtnStates() {
     if (!currentWord) return;
+    
+    // 更新斩按钮
     if (ignoredSet.has(currentWord.id)) {
         els.btnIgnore.textContent = "↩️ 撤销";
         els.btnIgnore.classList.add('ignored');
@@ -350,30 +358,37 @@ function updateIgnoreBtnState() {
         els.btnIgnore.textContent = "🗑️ 斩";
         els.btnIgnore.classList.remove('ignored');
     }
+
+    // 更新收藏按钮
+    if (favoriteSet.has(currentWord.id)) {
+        els.btnFav.textContent = "⭐ 已收藏";
+        els.btnFav.classList.add('active');
+    } else {
+        els.btnFav.textContent = "⭐ 收藏";
+        els.btnFav.classList.remove('active');
+    }
 }
 
 function resetIgnored() {
     if (confirm("恢复所有已删除单词？")) {
         ignoredSet.clear();
         saveIgnored();
-        loadSelectedUnits(); // 重新加载生效
+        loadSelectedUnits();
     }
 }
 
+// --- 其他 ---
 function changeOrder() {
     const radios = document.getElementsByName('order');
     for(let r of radios) if(r.checked) currentOrder = r.value;
-    refreshPlayList(false); // 改变顺序时重置进度
+    refreshPlayList(false);
 }
-
 function switchMode(mode, refresh = true) {
     currentMode = mode;
     els.btnModeGender.className = mode === 'gender' ? 'active' : '';
     els.btnModeSpelling.className = mode === 'spelling' ? 'active' : '';
-    if(refresh && activeList.length > 0) refreshPlayList(false); // 改变模式时重置进度
+    if(refresh && activeList.length > 0) refreshPlayList(false);
 }
-
-// 判题
 function checkGender(uGender) {
     if(gameState!=='waiting_answer') return;
     const ok = uGender.toLowerCase() === currentWord.gender.toLowerCase();
@@ -393,9 +408,7 @@ function submitSpelling() {
 }
 function showResult(ok) {
     gameState = 'waiting_next';
-    let ansHtml = currentWord.type === 'n' 
-        ? `<span class="c-${currentWord.gender}">${currentWord.gender}</span> ${currentWord.word}`
-        : currentWord.word;
+    let ansHtml = currentWord.type === 'n' ? `<span class="c-${currentWord.gender}">${currentWord.gender}</span> ${currentWord.word}` : currentWord.word;
     els.result.innerHTML = ok ? `✅ Richtig! ${ansHtml}` : `❌ Falsch! 答案: ${ansHtml}`;
     els.result.className = ok ? "result correct" : "result wrong";
     els.infoArea.style.display = 'block';
@@ -405,7 +418,6 @@ function showResult(ok) {
     els.btnNext.style.display = 'inline-block';
     els.btnNext.focus();
 }
-
 function toggleSidebar() { 
     document.getElementById('sidebar').classList.toggle('open');
     document.getElementById('sidebar-overlay').classList.toggle('visible');
